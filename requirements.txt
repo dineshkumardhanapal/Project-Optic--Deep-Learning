@@ -1,0 +1,10 @@
+Flask
+Flask-Cors
+werkzeug
+Pillow
+pdf2image
+transformers
+torch
+unstructured[local-inference]
+python-doctr[torch]
+pytesseract
