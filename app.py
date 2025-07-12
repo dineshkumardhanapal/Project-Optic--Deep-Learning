@@ -22,26 +22,31 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # --- Machine Learning Model Loading ---
-# Define the path to the locally saved model
-LOCAL_MODEL_PATH = "./layoutlm-local-model"
+# FIX: Construct an absolute path to the model directory to avoid ambiguity.
+# This resolves the "Repo id must use alphanumeric chars" error.
+base_dir = os.path.abspath(os.path.dirname(__file__))
+LOCAL_MODEL_PATH = os.path.join(base_dir, "layoutlm-local-model")
 
+extractor_pipeline = None
 try:
-    logging.info(f"Loading model from local path: {LOCAL_MODEL_PATH}")
-    # Update the pipeline to load from the local directory
-    extractor_pipeline = pipeline(
-        "document-question-answering",
-        model=LOCAL_MODEL_PATH,
-        tokenizer=LOCAL_MODEL_PATH  # Explicitly load the tokenizer as well
-    )
-    logging.info("Model loaded successfully from local path.")
+    # Check if the model directory exists before trying to load
+    if os.path.exists(LOCAL_MODEL_PATH):
+        logging.info(f"Loading model from local path: {LOCAL_MODEL_PATH}")
+        extractor_pipeline = pipeline(
+            "document-question-answering",
+            model=LOCAL_MODEL_PATH,
+            tokenizer=LOCAL_MODEL_PATH
+        )
+        logging.info("Model loaded successfully from local path.")
+    else:
+        logging.error(f"Model directory not found at: {LOCAL_MODEL_PATH}")
+
 except Exception as e:
-    logging.error(f"Failed to load model from {LOCAL_MODEL_PATH}: {e}")
-    extractor_pipeline = None
+    logging.error(f"A critical error occurred while loading the model: {e}")
 
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
 
 def extract_details_from_image(image):
     """
@@ -64,7 +69,7 @@ def extract_details_from_image(image):
         "Order ID": "What is the Order ID?",
         "Ship Mode": "What is the Ship Mode?",
     }
-
+    
     extracted_data = {}
     for key, question in questions.items():
         try:
@@ -80,17 +85,27 @@ def extract_details_from_image(image):
         except Exception as e:
             logging.error(f"Error extracting '{key}': {e}")
             extracted_data[key] = {"answer": "Extraction Error", "box": [0, 0, 0, 0]}
-
+            
     return extracted_data
+
+# ADDED: A health check endpoint to easily verify if the server is running.
+@app.route('/', methods=['GET'])
+def health_check():
+    model_status = "loaded" if extractor_pipeline is not None else "not loaded"
+    return jsonify({"status": "ok", "model_status": model_status})
 
 
 @app.route('/extract', methods=['POST'])
 def extract_invoice_data():
+    # ADDED: Check if the model is loaded before processing.
+    if extractor_pipeline is None:
+        return jsonify({"error": "Model is not loaded, the service is unavailable."}), 503
+
     if 'invoices' not in request.files:
         return jsonify({"error": "No files part in the request"}), 400
 
     files = request.files.getlist('invoices')
-
+    
     if not files or files[0].filename == '':
         return jsonify({"error": "No selected files"}), 400
 
@@ -100,9 +115,9 @@ def extract_invoice_data():
             filename = secure_filename(file.filename)
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             file.save(filepath)
-
+            
             logging.info(f"Processing file: {filename}")
-
+            
             try:
                 images = convert_from_path(filepath, first_page=1, last_page=1)
                 if images:
@@ -120,7 +135,5 @@ def extract_invoice_data():
 
     return jsonify(results)
 
-
 if __name__ == '__main__':
-    # Use the PORT environment variable provided by Azure, default to 8000 for local dev
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8000)))
