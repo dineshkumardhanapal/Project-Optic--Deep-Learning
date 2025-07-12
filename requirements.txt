@@ -8,3 +8,4 @@ torch
 unstructured[local-inference]
 python-doctr[torch]
 pytesseract
+gunicorn
